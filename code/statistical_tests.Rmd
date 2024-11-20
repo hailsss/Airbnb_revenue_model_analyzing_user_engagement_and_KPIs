@@ -1,0 +1,168 @@
+---
+title: "Stats_Final_Proj"
+output:
+  pdf_document: default
+  html_document:
+    df_print: paged
+---
+=
+```{r setup, include=FALSE}
+library(tidyverse)
+library(formattable)
+library(MASS)
+library(ggplot2)
+library(formatR)
+library(tinytex)
+library(DescTools)
+knitr::opts_chunk$set(echo = FALSE, eval=F, tidy=TRUE, tidy.opts=list(width.cutoff=80))
+```
+
+## Load data from csv
+```{r echo = FALSE, eval= TRUE}
+contacts <- read.csv('contacts.csv')
+listings <- read.csv('listings.csv')
+users <- read.csv('users.csv')
+```
+
+```{r echo = FALSE, eval= TRUE}
+combined <- left_join(left_join(left_join(contacts, listings), users, by = c("id_guest_anon" = "id_user_anon")), users, by = c("id_host_anon" = "id_user_anon"), suffix = c("_guest", "_host")) %>% distinct() %>%  # Remove duplicates
+filter(guest_user_stage_first != '-unknown-' & total_reviews >= 0 & (ts_booking_at <= ds_checkout_first | is.na(ts_booking_at)))
+```
+
+
+***************************************************************************
+### Statistical Analysis ###
+***************************************************************************
+
+Significance level = 5%
+
+**1. Is the average number of interactions equal in inquiries by past bookers and new guests? (Welch t-test for equal means) **
+
+```{r echo=F, eval=T}
+past_bookers = contacts[contacts$guest_user_stage_first=="past_booker",]
+n_past_bookers = nrow(past_bookers)
+
+new_guests = contacts[contacts$guest_user_stage_first=="new",]
+n_new_guests = nrow(new_guests)
+```
+
+\(H_{0}\) : Mean number of interactions of past bookers is equal to or less than new guests
+
+\(H_{A}\) : Mean number of interactions of past bookers is more than new guests
+
+
+```{r echo=F, eval=T}
+t.test(past_bookers$m_interactions,new_guests$m_interactions, var.equal=F,alt="greater")
+```
+
+* Since p-value is less than 0.05, we can conclude that mean number of interactions of past bookers is more.
+
+* Also, the 95% confidence interval of difference does not include 0.
+
+**2. Is the median number of interactions equal in inquiries by past bookers and new guests? (Wilcoxon Rank Sum Test) **
+
+\(H_{0}\) : Median number of interactions of past bookers is equal to or less than new guests
+
+\(H_{A}\) : Median number of interactions of past bookers is more than new guests
+
+```{r echo=F, eval=T}
+wilcox.test(past_bookers$m_interactions,new_guests$m_interactions,exact=F,correct=F,conf.int=T,alt="greater")
+```
+
+* Since p-value is less than 0.05, we can conclude that median number of interactions of past bookers is more.
+
+* Also, the 95% confidence interval of difference does not include 0.
+
+* From Parts 1 & 2, we see that past bookers interact more with the hosts.
+
+**3. We have a hunch that over half of the guests who instantly book properties are confident past bookers? Is this true? (Z-test for proportion) **
+
+\(H_{0}\) : p \(\leq\) 0.5
+
+\(H_{A}\) : p \(>\) 0.5
+
+```{r echo=F, eval=T}
+instant_book = contacts[contacts$contact_channel_first=="instant_book",]
+past_instant_book = instant_book[instant_book$guest_user_stage_first=="past_booker",]
+
+prop.test(x=nrow(past_instant_book), n=nrow(instant_book), p = 0.5, alternative = "greater", correct = TRUE)
+```
+
+* Since p-value is more than 0.05, we can conclude that more than half of instant bookings are from past bookers.
+
+* We are 95% confident that proportion of instant bookings done by past bookers is in [0.57, 1]
+
+**4. Are contact channel and guest user stage (new or past booker) independent? In other words, do new guests display any preference in their inquiries? (Chi-square test for independence)**
+
+\(H_{0}\) : Contact channel and guest user stage are independent
+
+\(H_{A}\) : Contact channel and guest user stage are associated
+
+```{r echo=F, eval=T}
+notunknown = contacts[contacts$guest_user_stage_first!="-unknown-",]
+observed = table(notunknown$contact_channel_first, notunknown$guest_user_stage_first)
+observed
+
+chisq.test(observed, correct=F)
+```
+
+Since p-value is less than 0.05, we can conclude that there is an associate between contact channel and guest user stage.
+
+**5. Can we linearly predict the number of guests based on other request details? It is possible that guests who have a large booking are more likely to interact with the hosts. Are large booking requests (higher number of guests) associated with higher number of interactions? (Correlation and Regression)**
+
+```{r echo=F, eval=T}
+cor.test(contacts$m_interactions, contacts$m_guests)
+```
+
+Correlation between number of interactions and number of guests = -0.03656
+
+```{r echo=F, eval=T}
+cor.test(contacts$m_first_message_length_in_characters, contacts$m_guests)
+```
+
+Correlation between length of first message and number of guests = -0.02791
+
+Both the correlations are significant
+
+```{r echo=F, eval=T}
+xbar_int = mean(contacts$m_guests,na.rm=T)
+plot(1:length(contacts$m_guests), contacts$m_interactions, main="Incomes",
+   xlab="Values", ylab="Number of Interactions", pch=19)
+abline(a=xbar_int, b=0, col='blue')
+
+xbar_ml = mean(contacts$m_first_message_length_in_characters,na.rm=T)
+plot(1:length(contacts$m_guests), contacts$m_first_message_length_in_characters, main="Age",
+   xlab="Values", ylab="First message length", pch=19)
+abline(a=xbar_ml, b=0, col='blue')
+```
+
+Number of interactions and first message length (the two numeric variables) have a constant variance and this meets the homoscedasticity assumption. 
+
+```{r echo=F, eval=T}
+boxplot(contacts$m_guests ~ contacts$contact_channel_first, main="Distribution of guests per channel", ylab="Number of guests", xlab="Contact channel") 
+
+boxplot(contacts$m_guests ~ contacts$guest_user_stage_first, main="Distribution of guests per stage", ylab="Number of guests", xlab="User stage") 
+```
+
+Neither the categorical nor the numeric variables indicate an association. 
+
+```{r echo=F, eval=T}
+fit=lm(contacts$m_guests~contacts$m_interactions+contacts$m_first_message_length_in_characters+contacts$contact_channel_first+contacts$guest_user_stage_first)
+summary(fit)
+```
+
+A linear regression model thus fails to model the number of guests based on inquiry details.
+
+**6. Is the average number of guests equal in inquiries across all contact channels? (One-way ANOVA)**
+
+\(H_{0}\) : Mean number of guests is equal for book it, contact me and instant book channels
+
+\(H_{A}\) : At least one of the the means differs from one of the others
+
+```{r echo=F, eval=T}
+fit=aov(contacts$m_guests~contacts$contact_channel_first)
+summary(fit)
+anova(fit)
+```
+
+Since p-value is less than 0.05, mean number of guests is not equal across channels.
